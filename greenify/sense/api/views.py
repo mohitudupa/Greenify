@@ -18,7 +18,12 @@ sense = db["senses"]
 
         The following documents have the following fields:
             chunk_index: integer chunk number
-            data: array of arrays containing the data (max size 256 x 6)
+            s1: array of data from sensor 1 (max size 256)
+            s2: array of data from sensor 1 (max size 256)
+            s3: array of data from sensor 1 (max size 256)
+            s4: array of data from sensor 1 (max size 256)
+            s5: array of data from sensor 1 (max size 256)
+            s6: array of data from sensor 1 (max size 256)
             ts: array of timestamps for individual data upload actions (max size 256)
 
 """
@@ -33,7 +38,7 @@ view = sense.find_one({"_id": ID})
 chunk_size = 3
 end_chunk = view["end_chunk"]
 checkpoint = view["checkpoint"]
-chunk_fill = len(sense.find_one({"chunk_index": end_chunk})["ts"])
+chunk_fill = len(sense.find_one({"chunk_index": end_chunk})["s1"])
 
 
 class PutData(APIView):
@@ -53,49 +58,22 @@ class PutData(APIView):
         """
 
         global end_chunk, chunk_fill, chunk_size
-        data = [s1, s2, s3, s4, s5, s6]
-        ts = [time.time()]
-
-        sense.update_one({"chunk_index": end_chunk}, {"$push" :{ "data": data, "ts": {"$each": ts}}})
+        
+        sense.update_one({"chunk_index": end_chunk}, {"$push" :{ "s1": s1, "s2": s2, "s3": s3, "s4": s4, "s5": s5, "s6": s6, "ts": time.time()}})
         chunk_fill += 1
         
         if chunk_fill == chunk_size:
             chunk_fill, end_chunk = 0, end_chunk + 1
-            sense.insert_one({"chunk_index": end_chunk, "data": [], "ts": []})
+            sense.insert_one({"chunk_index": end_chunk, "s1": [], "s2": [],"s3": [],"s4": [],"s5": [],"s6": [],"ts": []})
             sense.update_one({"_id": ID}, {"$set": {"end_chunk": end_chunk}})
 
         return Response({"success": "Data uploaded successfully"})
 
 
-class PeekChunk(APIView):
-    permission_classes = (permissions.AllowAny,)
-
-    def get(self, request, format=None):
-
-        """
-            Class PeekChunk
-            Request type:   GET
-            URL:            /sense/api/peek/chunk/
-            Docs:           The Peek Chunk function is used to retrieve new data from the last retrieved chunk without 
-                            marking the read data as old. This means the same data is returned on subsequent peek chunk calls.
-
-                            Only new data from the chunk is returned not the entire chunk
-
-                            The returned data is of size 0 to 256 entries.
-        """
-
-        global checkpoint
-        cc_index = int(checkpoint / chunk_size)
-        checkpoint_offset = checkpoint % chunk_size
-
-        chunk = sense.find_one({"chunk_index": cc_index})
-        return Response({"data": chunk["data"][checkpoint_offset:], "time_stamp": chunk["ts"][checkpoint_offset:]})
-
-
 class GetChunk(APIView):
     permission_classes = (permissions.AllowAny,)
 
-    def get(self, request, format=None):
+    def get(self, request, get, format=None):
 
         """
             Class GetChunk
@@ -108,13 +86,20 @@ class GetChunk(APIView):
 
                             The returned data is of size 0 to 256 entries.
         """
-        
-        global checkpoint
-        cc_index = int(checkpoint / chunk_size)
-        cc_offset = checkpoint % chunk_size
+
+        if get not in ("get", "peek"):
+        	return Response({"error": "only get and peek are allowed"})
+
+        global checkpoint, chunk_size
+        cc_index, cc_offset = divmod(checkpoint, chunk_size)
 
         chunk = sense.find_one({"chunk_index": cc_index})
+        del chunk["_id"], chunk["chunk_index"]
+        for key in chunk.keys():
+            chunk[key] = chunk[key][cc_offset:]
 
-        checkpoint = checkpoint + len(chunk["ts"][cc_offset:])
-        sense.update_one({"_id": ID}, {"$set": {"checkpoint": checkpoint}})
-        return Response({"data": chunk["data"][cc_offset:], "time_stamp": chunk["ts"][cc_offset:]})
+        if get == "get":
+            checkpoint += len(chunk["s1"])
+            sense.update_one({"_id": ID}, {"$set": {"checkpoint": checkpoint}})
+
+        return Response(chunk)
